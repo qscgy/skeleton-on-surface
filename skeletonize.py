@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# # 2D AOF Skeleton
-#This is a jupyter notebook for 2D AOF Skeletonization code
-
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 from skimage.transform import rescale
@@ -22,95 +16,6 @@ import FastGeodis
 import networkx as nx
 import torch.nn.functional as F
 import natsort
-
-def rgb2gray(rgb):
-    return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140])
-
-fileName = "horse.png"
-
-# plt.imshow(distImage)
-# plt.show()
-
-def sample_sphere_2D(number_of_samples):
-    sphere_points = np.zeros((number_of_samples,2))
-    alpha = (2*math.pi)/(number_of_samples)
-    for i in range(number_of_samples):
-        sphere_points[i][0] = math.cos(alpha*(i-1))
-        sphere_points[i][1] = math.sin(alpha*(i-1))
-    return sphere_points
-
-def sub2ind(array_shape, rows, cols):
-    ind = rows*array_shape[1] + cols
-    ind[ind < 0] = -1
-    ind[ind >= array_shape[0]*array_shape[1]] = -1
-    return ind
-
-def ind2sub(array_shape, ind):
-    ind[ind < 0] = -1
-    ind[ind >= array_shape[0]*array_shape[1]] = -1
-    rows = (ind.astype('int') / array_shape[1])
-    cols = ind % array_shape[1]
-    return (rows, cols)
-
-
-def compute_aof(distImage, IDX, sphere_points, epsilon, number_of_samples=60):
-    m = distImage.shape[0]
-    n = distImage.shape[1]
-    normals = np.zeros(sphere_points.shape)
-    fluxImage = np.zeros((m,n))
-    for t in range(0,number_of_samples):
-        normals[t] = sphere_points[t]
-    sphere_points = sphere_points * epsilon
-    
-    XInds = IDX[0]
-    YInds = IDX[1]
-    
-    for i in range(0,m):
-        # print(i)
-        for j in range(0,n):       
-            flux_value = 0
-            if (distImage[i][j] > -1.5):
-                if( i > epsilon and j > epsilon and i < m - epsilon and j < n - epsilon ):
-#                   sum over dot product of normal and the gradient vector field (q-dot)
-                    for ind in range (0,number_of_samples):
-                                                
-#                       a point on the sphere
-                        px = i+sphere_points[ind][0]+0.5
-                        py = j+sphere_points[ind][1]+0.5                      
-#                       the indices of the grid cell that sphere points fall into 
-                        cI = math.floor(i+sphere_points[ind][0]+0.5)
-                        cJ = math.floor(j+sphere_points[ind][1]+0.5)
-                                               
-                        # calculate flux on surface
-                        # I think the grid cell is selected based on the exponential map of the sphere pt
-                        # Still need a way to estimate flux
-                        # Don't know the direction of the geodesic to the closest boundary pt
-                        
-                        # Shooting algorithm: run forward on manifold in different directions
-                        # for distance to boundary phi(x) from point x
-                        # direction whose end pt has lowest value of phi is the flux direction
-                        # idk how accurate or fast this would be
-                        
-                        # improved idea: breadth-first traversal of 8-connected graph to distance phi(x)
-                        
-                        # given the feature points (closest point on boundary), can use path straightening
-                        
-                        # alternatively, we abandon AOF and find a skeleton via Voronoi + MGF
-
-#                       closest point on the boundary to that sphere point
-                        bx = XInds[cI][cJ]
-                        by = YInds[cI][cJ]
-#                       the vector connect them
-                        qq = [bx-px,by-py]
-                    
-                        d = np.linalg.norm(qq)
-                        if(d!=0):
-                            qq = qq / d
-                        else:
-                            qq = [0,0]                        
-                        flux_value = flux_value + np.dot(qq,normals[ind])
-            fluxImage[i][j] = flux_value  
-    return fluxImage
 
 def boundary_loop(im):
     """Find the un-oriented traversal of the largest cycle in the boundary.
@@ -200,6 +105,17 @@ def gauusian_curvature(image):
     return gaussian_k
 
 def geodesic_skeleton(image, p, device='cpu', plot=False):
+    """Compute the geodesic skeleton.
+
+    Args:
+        image (ndarray): labeled connected component pixels of the frame
+        p (int): index of the pixels comprising the fold to be skeletonized
+        device (str, optional): Tensor device. Defaults to 'cpu'.
+        plot (bool, optional): Whether to display plots of the skeleton. Defaults to False.
+
+    Returns:
+        void
+    """
     I = labels==p   # type: np.ndarray  # change this to change which fold in image is used
     cc = morphology.binary_erosion(np.pad(I, ((1,1),(1,1))))[1:-1,1:-1] ^ I
 
@@ -209,42 +125,37 @@ def geodesic_skeleton(image, p, device='cpu', plot=False):
     if cycle is None:
         return None
     
-    dm = "Geodesic"
+    dm = "Geodesic"     # distance metric, Geodesic or Euclidean
     
     cycle = torch.from_numpy(cycle).to(device)
-    pt_coords = torch.hstack((torch.zeros_like(cycle), cycle))
+    pt_coords = torch.hstack((torch.zeros_like(cycle), cycle))  # coords of boundary points of cycle
     voronoi, distImage, pts = voronoi_2d(image_pt, pt_coords, 0, l=1.0 if dm=='Geodesic' else 0.0)
     voronoi *= I
     distImage *= I
-    IDX = np.zeros((2, voronoi.shape[-2], voronoi.shape[-1]))
-    IDX[0] = pts[voronoi.reshape(-1,1)-1, 2].reshape(voronoi.shape[-2], voronoi.shape[-1])
-    IDX[1] = pts[voronoi.reshape(-1,1)-1, 3].reshape(voronoi.shape[-2], voronoi.shape[-1])
     
-    v_bounds = segmentation.mark_boundaries(np.zeros(voronoi.shape), voronoi.numpy(), mode='subpixel', background_label=0)
+    # v_bounds = segmentation.mark_boundaries(np.zeros(voronoi.shape), voronoi.numpy(), mode='subpixel', background_label=0)
 
     # skeleton with granularity and pooling instead of AOF
     voronoi_inf = voronoi.clone()
     voronoi_inf[voronoi_inf==0] = -(voronoi_inf.max()*10)   # do this so pooling ignores pts outside region
     voronoi_neg_inf = voronoi.clone()
     voronoi_neg_inf[voronoi_neg_inf==0] = voronoi_neg_inf.max()*10
+    
+    # Apply convolutional min- and max-pooling in order to prune, as explained in my report.
     skel_max = F.max_pool2d(voronoi_inf[None,...].float(), kernel_size=2, stride=1)
     skel_min = -F.max_pool2d(-voronoi_neg_inf[None,...].float(), kernel_size=2, stride=1)
     skel_granular = torch.minimum(skel_max-skel_min, skel_min+voronoi.max()-skel_max)
     
+    # Plotting
     plt.subplots(1,3,figsize=(12,4))
     plt.tight_layout()
     for i, g in enumerate([10, 15, 30]):
         skel = skel_granular >= g
         skel = skel.squeeze()
-        plt.subplot(1,3,i+1)
-        plt.title(f"Granularity {g}")
-        plt.imshow(skel)
-        plt.savefig(f'frame0_{p}_granular.png')
-    
-    # sphere_points = sample_sphere_2D(60)
-    # fluxImage = compute_aof(distImage, IDX, sphere_points, 1.0)
-    # flux_thresh = 5
-    # skel_aof = fluxImage >= flux_thresh
+        # plt.subplot(1,3,i+1)
+        # plt.title(f"Granularity {g}")
+        # plt.imshow(skel)
+        # plt.savefig(f'frame0_{p}_granular.png')
     
     if plot:
         plot_pipeline(image=image,
@@ -259,6 +170,25 @@ def geodesic_skeleton(image, p, device='cpu', plot=False):
     return skel_granular.int()
 
 def plot_pipeline(**kwargs):
+    """Plot the skeletonization steps.
+    
+    **kwargs : Items to plot. Keywords are:
+        image (ndarray of int): `image` passed to `geodesic_skeleton`, the labeled connected components
+        
+        I (ndarray of bool): binary image of fold
+        
+        cc (ndarray of bool): binary array with fold region boundary pixels marked as 1 and all others 0
+        
+        distImage (ndarray of float): distance transform distances of region
+        
+        skel_granular (ndarray of bool): binary image of skeleton, with skeleton pixels as 1
+        
+        voronoi (ndarray of int): binary image of fold with pixels labeled by Voronoi cell
+        
+        dm (str): distance metric, Geodesic or Euclidean
+        
+        fname (str, optional): filename to save plots. If None, plots will be displayed instead.
+    """
     image = kwargs['image']
     I = kwargs['I']
     cc = kwargs['cc']
@@ -308,52 +238,64 @@ def plot_pipeline(**kwargs):
         plt.savefig(fname)
 
 if __name__=='__main__':
-    name = 'Auto_A_Aug18_09-06-42_006'
-    frame = 2
-    seg_path = os.path.join("/Users/sam/Documents/UNC", name, "results-mine/preds.npy")
-    depth_dir = os.path.join( "/Users/sam/Documents/UNC", name, "colon_geo_light/")
-    photo_dir = os.path.join( "/Users/sam/Documents/UNC", name, "image/")
-    depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
+    # Configuration
+    base_dir = "/Users/sam/Documents/UNC"
+    plot_sequence = False
+    name = 'Auto_A_Aug18_09-06-42_006'  # sequence name
     s = 2   # downscale factor
     device = "cuda" if torch.cuda.is_available() else "cpu" # does not yet work with MPS (Apple Silicon)
+    frames = [0]    # numbers of frames to process
     
-    for frame in range(1):
+    # Find paths and file names
+    seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
+    depth_dir = os.path.join(base_dir, name, "colon_geo_light/")
+    photo_dir = os.path.join(base_dir, name, "image/")
+    depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
+    
+    # Process each frame
+    for frame in frames:
+        # Load frame depth and segmentation maps
         depth_path = os.path.join(depth_dir, depth_paths[frame])
         seg = np.load(seg_path)[frame]
+        
+        # Preprocess segmentation and resize both
         seg = transform.resize(seg, (seg.shape[-2]//s, seg.shape[-1]//s))
         image = 1/np.load(depth_path)
         image = transform.resize(image, seg.shape)
-        seg = filters.gaussian(seg, 3)
+        seg = filters.gaussian(seg, 3)      # apply Gaussian blur
         seg = seg>0.3
         seg = seg.astype(np.uint8)
         nlabel, labels, stats, centroids = cv2.connectedComponentsWithStats(seg)
         
-        skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))
-        for p in [1,2]:
+        skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination arry for skeletons
+        skel_numbers = [1, 2]   # label numbers of folds to process
+        for p in skel_numbers:     # process each fold in skel_numbers
             skel = geodesic_skeleton(image, p, device, plot=False)
             if skel is None:
                 continue
             skel = skel.numpy()
             skeletons = skeletons + skel*p
-        # skeletons = np.pad(skeletons, ((0,1),(0,1)))
-
-        # skeletons = skeletons.astype(int)
-        # frames = natsort.natsorted(os.listdir(photo_dir))
-        # photo = skimage.io.imread(os.path.join(photo_dir, frames[frame]))
-        # photo = transform.resize(photo, skeletons.shape)
-        # photo_folds = photo.copy()
-        # photo_folds[seg==1,0] = 0
-        # fig, ax = plt.subplots(2, 3, figsize=(17,9))
-        # plt.subplot(2,3,frame+1)
-        # plt.imshow(photo_folds)
-        # plt.axis("off")
-        # plt.title(f"Frame {frame+1}")
         
-        # viridis = mpl.colormaps['viridis']
-        # colors = np.array([viridis(n/np.max(skeletons)) for n in np.unique(skeletons)])[:,:3]
-        # photo[skeletons>0,:] = colors[skeletons[skeletons>0]]
-        # plt.subplot(2,3,frame+4)
-        # plt.imshow(photo)
-        # plt.axis("off")
-    
-    # plt.show()
+        # Plot a sequence of frames with their skeletal features
+        if plot_sequence:        
+            skeletons = np.pad(skeletons, ((0,1),(0,1)))
+
+            skeletons = skeletons.astype(int)
+            frames = natsort.natsorted(os.listdir(photo_dir))
+            photo = skimage.io.imread(os.path.join(photo_dir, frames[frame]))
+            photo = transform.resize(photo, skeletons.shape)
+            photo_folds = photo.copy()
+            photo_folds[seg==1,0] = 0
+            fig, ax = plt.subplots(2, 3, figsize=(17,9))
+            plt.subplot(2,3,frame+1)
+            plt.imshow(photo_folds)
+            plt.axis("off")
+            plt.title(f"Frame {frame+1}")
+            
+            viridis = mpl.colormaps['viridis']
+            colors = np.array([viridis(n/np.max(skeletons)) for n in np.unique(skeletons)])[:,:3]
+            photo[skeletons>0,:] = colors[skeletons[skeletons>0]]
+            plt.subplot(2,3,frame+4)
+            plt.imshow(photo)
+            plt.axis("off")
+            plt.show()
