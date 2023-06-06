@@ -104,12 +104,13 @@ def gauusian_curvature(image):
     gaussian_k = (hxx * hyy - hxy**2)/((1 + hx**2 + hy**2)**2)
     return gaussian_k
 
-def geodesic_skeleton(image, p, device='cpu', plot=False):
+def geodesic_skeleton(image, p, g=15, device='cpu', plot=False):
     """Compute the geodesic skeleton.
 
     Args:
         image (ndarray): labeled connected component pixels of the frame
         p (int): index of the pixels comprising the fold to be skeletonized
+        g (int): granularity
         device (str, optional): Tensor device. Defaults to 'cpu'.
         plot (bool, optional): Whether to display plots of the skeleton. Defaults to False.
 
@@ -146,16 +147,7 @@ def geodesic_skeleton(image, p, device='cpu', plot=False):
     skel_min = -F.max_pool2d(-voronoi_neg_inf[None,...].float(), kernel_size=2, stride=1)
     skel_granular = torch.minimum(skel_max-skel_min, skel_min+voronoi.max()-skel_max)
     
-    # Plotting
-    plt.subplots(1,3,figsize=(12,4))
-    plt.tight_layout()
-    for i, g in enumerate([10, 15, 30]):
-        skel = skel_granular >= g
-        skel = skel.squeeze()
-        # plt.subplot(1,3,i+1)
-        # plt.title(f"Granularity {g}")
-        # plt.imshow(skel)
-        # plt.savefig(f'frame0_{p}_granular.png')
+    skel = (skel_granular >= g)
     
     if plot:
         plot_pipeline(image=image,
@@ -165,9 +157,9 @@ def geodesic_skeleton(image, p, device='cpu', plot=False):
             skeleton=skel,
             voronoi=voronoi,
             dm=dm,
-            fname=f'frame0_{p}_g{g}.png'
+            # fname=f'frame0_{p}_g{g}.png'
         )
-    return skel_granular.int()
+    return skel.int()
 
 def plot_pipeline(**kwargs):
     """Plot the skeletonization steps.
@@ -240,11 +232,11 @@ def plot_pipeline(**kwargs):
 if __name__=='__main__':
     # Configuration
     base_dir = "/Users/sam/Documents/UNC"
-    plot_sequence = False
+    plot_sequence = True
     name = 'Auto_A_Aug18_09-06-42_006'  # sequence name
     s = 2   # downscale factor
     device = "cuda" if torch.cuda.is_available() else "cpu" # does not yet work with MPS (Apple Silicon)
-    frames = [0]    # numbers of frames to process
+    frames = [0, 1, 2, 3, 4, 5]    # numbers of frames to process
     
     # Find paths and file names
     seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
@@ -252,8 +244,15 @@ if __name__=='__main__':
     photo_dir = os.path.join(base_dir, name, "image/")
     depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
     
+    skel_numbers = [1, 2, 3]   # label numbers of folds to process in each frame
+    
+    # Set up plots
+    if plot_sequence:
+        fig, ax = plt.subplots(2, len(frames), figsize=(17,9))
+        fig.tight_layout()
+        
     # Process each frame
-    for frame in frames:
+    for i, frame in enumerate(frames):
         # Load frame depth and segmentation maps
         depth_path = os.path.join(depth_dir, depth_paths[frame])
         seg = np.load(seg_path)[frame]
@@ -268,26 +267,26 @@ if __name__=='__main__':
         nlabel, labels, stats, centroids = cv2.connectedComponentsWithStats(seg)
         
         skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination arry for skeletons
-        skel_numbers = [1, 2]   # label numbers of folds to process
         for p in skel_numbers:     # process each fold in skel_numbers
-            skel = geodesic_skeleton(image, p, device, plot=False)
+            skel = geodesic_skeleton(image, p, g=12, device=device, plot=False)    # set plot=True to plot the whole pipeline
             if skel is None:
                 continue
             skel = skel.numpy()
             skeletons = skeletons + skel*p
-        
+        skeletons = np.squeeze(skeletons)
+
         # Plot a sequence of frames with their skeletal features
         if plot_sequence:        
             skeletons = np.pad(skeletons, ((0,1),(0,1)))
 
             skeletons = skeletons.astype(int)
-            frames = natsort.natsorted(os.listdir(photo_dir))
-            photo = skimage.io.imread(os.path.join(photo_dir, frames[frame]))
+            frame_files = natsort.natsorted(os.listdir(photo_dir))
+            photo = skimage.io.imread(os.path.join(photo_dir, frame_files[frame]))
             photo = transform.resize(photo, skeletons.shape)
             photo_folds = photo.copy()
-            photo_folds[seg==1,0] = 0
-            fig, ax = plt.subplots(2, 3, figsize=(17,9))
-            plt.subplot(2,3,frame+1)
+            photo_folds[seg==1,0] = 0   # mark fold segmentations in green
+            
+            plt.subplot(2,len(frames),i+1)
             plt.imshow(photo_folds)
             plt.axis("off")
             plt.title(f"Frame {frame+1}")
@@ -295,7 +294,8 @@ if __name__=='__main__':
             viridis = mpl.colormaps['viridis']
             colors = np.array([viridis(n/np.max(skeletons)) for n in np.unique(skeletons)])[:,:3]
             photo[skeletons>0,:] = colors[skeletons[skeletons>0]]
-            plt.subplot(2,3,frame+4)
+            plt.subplot(2,len(frames),i+len(frames)+1)
             plt.imshow(photo)
             plt.axis("off")
-            plt.show()
+    if plot_sequence:
+        plt.show()
