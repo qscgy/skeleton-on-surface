@@ -230,13 +230,15 @@ def plot_pipeline(**kwargs):
         plt.savefig(fname)
 
 if __name__=='__main__':
-    # Configuration
+    
+    ###### Configuration
     base_dir = "/Users/sam/Documents/UNC"
-    plot_sequence = True
+    plot_sequence = False
+    save_sequence = True
     name = 'Auto_A_Aug18_09-06-42_006'  # sequence name
     s = 2   # downscale factor
     device = "cuda" if torch.cuda.is_available() else "cpu" # does not yet work with MPS (Apple Silicon)
-    frames = [0, 1, 2, 3, 4, 5]    # numbers of frames to process
+    frames = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]    # numbers of frames to process
     
     # Find paths and file names
     seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
@@ -274,9 +276,9 @@ if __name__=='__main__':
             skel = skel.numpy()
             skeletons = skeletons + skel*p
         skeletons = np.squeeze(skeletons)
-
+        
         # Plot a sequence of frames with their skeletal features
-        if plot_sequence:        
+        if plot_sequence or save_sequence:        
             skeletons = np.pad(skeletons, ((0,1),(0,1)))
 
             skeletons = skeletons.astype(int)
@@ -285,17 +287,28 @@ if __name__=='__main__':
             photo = transform.resize(photo, skeletons.shape)
             photo_folds = photo.copy()
             photo_folds[seg==1,0] = 0   # mark fold segmentations in green
-            
-            plt.subplot(2,len(frames),i+1)
-            plt.imshow(photo_folds)
-            plt.axis("off")
-            plt.title(f"Frame {frame+1}")
-            
             viridis = mpl.colormaps['viridis']
             colors = np.array([viridis(n/np.max(skeletons)) for n in np.unique(skeletons)])[:,:3]
             photo[skeletons>0,:] = colors[skeletons[skeletons>0]]
-            plt.subplot(2,len(frames),i+len(frames)+1)
-            plt.imshow(photo)
-            plt.axis("off")
+            
+            if plot_sequence:
+                plt.subplot(2,len(frames),i+1)
+                plt.imshow(photo_folds)
+                plt.axis("off")
+                plt.title(f"Frame {frame+1}")
+                
+                plt.subplot(2,len(frames),i+len(frames)+1)
+                plt.imshow(photo)
+                plt.axis("off")
+            elif save_sequence:
+                fig, ax = plt.subplots(1,2)
+                fig.tight_layout()
+                fig.suptitle(f"Frame {frame+1}")
+                ax[0].imshow(photo_folds)
+                ax[0].axis('off') 
+                ax[1].imshow(photo)
+                ax[1].axis('off')
+                fig.savefig(f"figures/{name} {i}.jpeg")
+                
     if plot_sequence:
         plt.show()
