@@ -16,6 +16,8 @@ import FastGeodis
 import networkx as nx
 import torch.nn.functional as F
 import natsort
+import yaml
+import sys
 
 def boundary_loop(im):
     """Find the un-oriented traversal of the largest cycle in the boundary.
@@ -230,15 +232,21 @@ def plot_pipeline(**kwargs):
         plt.savefig(fname)
 
 if __name__=='__main__':
-    
+    config_file = sys.argv[1]    # the one posititional argument is the config file
+    with open(config_file, 'r') as f:
+        cfg = yaml.safe_load(f)
+
     ###### Configuration
-    base_dir = "/Users/sam/Documents/UNC"
-    plot_sequence = False
-    save_sequence = True
-    name = 'Auto_A_Aug18_09-06-42_006'  # sequence name
-    s = 2   # downscale factor
-    device = "cuda" if torch.cuda.is_available() else "cpu" # does not yet work with MPS (Apple Silicon)
-    frames = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]    # numbers of frames to process
+    base_dir = cfg['base_dir']
+    plot_sequence = cfg['plot_sequence']
+    save_sequence = cfg['save_sequence']
+    name = cfg['name']
+    s = cfg['scale_factor']
+    device = cfg['device']
+    if isinstance(cfg['frames'], dict):
+        frames = np.arange(cfg['frames']['start'], cfg['frames']['stop'])
+    else:
+        frames = cfg['frames']
     
     # Find paths and file names
     seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
@@ -246,7 +254,7 @@ if __name__=='__main__':
     photo_dir = os.path.join(base_dir, name, "image/")
     depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
     
-    skel_numbers = [1, 2, 3]   # label numbers of folds to process in each frame
+    skel_numbers = [1, 2, 3, 4, 5]   # label numbers of folds to process in each frame
     
     # Set up plots
     if plot_sequence:
@@ -288,8 +296,9 @@ if __name__=='__main__':
             photo_folds = photo.copy()
             photo_folds[seg==1,0] = 0   # mark fold segmentations in green
             viridis = mpl.colormaps['viridis']
-            colors = np.array([viridis(n/np.max(skeletons)) for n in np.unique(skeletons)])[:,:3]
-            photo[skeletons>0,:] = colors[skeletons[skeletons>0]]
+            colors = np.array([viridis(n/np.max(skel_numbers)) for n in skel_numbers])[:,:3]
+            # print(colors)
+            photo[skeletons>0,:] = colors[skeletons[skeletons>0]-1]
             
             if plot_sequence:
                 plt.subplot(2,len(frames),i+1)
@@ -303,12 +312,15 @@ if __name__=='__main__':
             elif save_sequence:
                 fig, ax = plt.subplots(1,2)
                 fig.tight_layout()
-                fig.suptitle(f"Frame {frame+1}")
+                fig.suptitle(f"Frame {frame}")
                 ax[0].imshow(photo_folds)
                 ax[0].axis('off') 
                 ax[1].imshow(photo)
                 ax[1].axis('off')
-                fig.savefig(f"figures/{name} {i}.jpeg")
+                if not os.path.isdir(f"figures/{name}"):
+                    os.makedirs(f"figures/{name}")
+                fig.savefig(f"figures/{name}/{frame}.jpeg")
+                plt.close(fig)
                 
     if plot_sequence:
         plt.show()

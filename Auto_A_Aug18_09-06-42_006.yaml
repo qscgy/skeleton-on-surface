@@ -1,0 +1,9 @@
+name: Auto_A_Aug18_09-06-42_006
+base_dir: /Users/sam/Documents/UNC
+plot_sequence: False
+save_sequence: True
+scale_factor: 2
+device: cpu
+frames:
+  start: 0
+  stop: 32
