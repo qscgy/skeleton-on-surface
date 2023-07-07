@@ -19,6 +19,8 @@ import natsort
 import yaml
 import sys
 
+from exr import read_exr
+
 def boundary_loop(im):
     """Find the un-oriented traversal of the largest cycle in the boundary.
     Boundary is a graph defined by the 8-connectvity of a binary image,
@@ -40,6 +42,7 @@ def boundary_loop(im):
     cycles = nx.simple_cycles(graph)
     by_len = sorted(list(cycles), key=lambda c: len(c))
     node_inds = np.vstack(np.unravel_index(nodes, im.shape)).T
+
     if len(node_inds>1):
         path = node_inds[by_len[-1]]
         return path
@@ -86,7 +89,7 @@ def voronoi_2d(image, mask_pts, n, l=1.0)->Tuple[torch.Tensor, torch.Tensor, tor
     for i in range(n):
         mask = torch.ones_like(image)
         mask[...,pts[i,-2],pts[i,-1]] = 0
-        dist = FastGeodis.generalised_geodesic2d_toivanen(
+        dist = FastGeodis.generalised_geodesic2d(
             image, mask, 1e10, l, 2
         )
         geodesic_dists[i] = dist[0,0]
@@ -94,7 +97,7 @@ def voronoi_2d(image, mask_pts, n, l=1.0)->Tuple[torch.Tensor, torch.Tensor, tor
     
     return voronoi.int(), torch.min(geodesic_dists, dim=0).values, pts.long()
 
-def gauusian_curvature(image):
+def gaussian_curvature(image):
     # Following Kurita and Boulanger (1992), https://www.mva-org.jp/Proceedings/CommemorativeDVD/1992/papers/1992389.pdf
     # x is dimension 0, y is dimension 1
     image_ = image-image.min()
@@ -106,11 +109,12 @@ def gauusian_curvature(image):
     gaussian_k = (hxx * hyy - hxy**2)/((1 + hx**2 + hy**2)**2)
     return gaussian_k
 
-def geodesic_skeleton(image, p, g=15, device='cpu', plot=False):
+def geodesic_skeleton(image, labels, p, g=15, device='cpu', plot=False):
     """Compute the geodesic skeleton.
 
     Args:
-        image (ndarray): labeled connected component pixels of the frame
+        image (ndarray): depth map
+        labels (ndarray): labeled connected component pixels of the frame
         p (int): index of the pixels comprising the fold to be skeletonized
         g (int): granularity
         device (str, optional): Tensor device. Defaults to 'cpu'.
@@ -120,6 +124,9 @@ def geodesic_skeleton(image, p, g=15, device='cpu', plot=False):
         void
     """
     I = labels==p   # type: np.ndarray  # change this to change which fold in image is used
+    if np.count_nonzero(I)<3:
+        return None
+    
     cc = morphology.binary_erosion(np.pad(I, ((1,1),(1,1))))[1:-1,1:-1] ^ I
 
     image_pt = torch.from_numpy(image).unsqueeze_(0).unsqueeze_(0)
@@ -248,56 +255,78 @@ if __name__=='__main__':
     else:
         frames = cfg['frames']
     gran = cfg['granularity']
-    
+    depth_fmt = 'npy'
+    if 'depth_fmt' in cfg:
+        depth_fmt = cfg['depth_fmt']
+    disparity = True
+    if 'disparity' in cfg:
+        disparity = cfg['disparity']
+
     # Find paths and file names
     seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
-    depth_dir = os.path.join(base_dir, name, "colon_geo_light/")
-    photo_dir = os.path.join(base_dir, name, "image/")
-    depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
+    depth_dir = os.path.join(base_dir, name, "colon_geo_light/") if 'depth_dir' not in cfg else cfg['depth_dir']
+    photo_dir = os.path.join(base_dir, name, "image/") if 'photo_dir' not in cfg else cfg['photo_dir']
+    if depth_fmt=='npy':
+        depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if "_disp.npy" in p])
+    else:
+        depth_paths = natsort.natsorted([p for p in os.listdir(depth_dir) if f".{depth_fmt}" in p])
     
-    skel_numbers = [1, 2, 3, 4, 5]   # label numbers of folds to process in each frame
+    skel_numbers = [1, 2, 3, 4]   # label numbers of folds to process in each frame
     
     # Set up plots
     if plot_sequence:
         fig, ax = plt.subplots(2, len(frames), figsize=(17,9))
         fig.tight_layout()
-        
+
+    all_skels = []
+
     # Process each frame
     for i, frame in enumerate(frames):
         # Load frame depth and segmentation maps
         depth_path = os.path.join(depth_dir, depth_paths[frame])
-        seg = np.load(seg_path)[frame]
+        _seg = np.load(seg_path)[frame]
         
         # Preprocess segmentation and resize both
-        seg = transform.resize(seg, (seg.shape[-2]//s, seg.shape[-1]//s))
-        image = 1/np.load(depth_path)
-        image = transform.resize(image, seg.shape)
+        
+        if disparity:
+            image = 1/np.load(depth_path)
+        elif depth_fmt=='exr':
+            image = read_exr(depth_path)
+        else:
+            image = np.load(depth_path)
+        seg = transform.resize(_seg, (_seg.shape[-2]//s, _seg.shape[-1]//s))
         seg = filters.gaussian(seg, 3)      # apply Gaussian blur
         seg = seg>0.3
         seg = seg.astype(np.uint8)
+        image = transform.resize(image, seg.shape)
         nlabel, labels, stats, centroids = cv2.connectedComponentsWithStats(seg)
         
         skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination arry for skeletons
         for p in skel_numbers:     # process each fold in skel_numbers
-            skel = geodesic_skeleton(image, p, g=gran, device=device, plot=False)    # set plot=True to plot the whole pipeline
+            if p>nlabel:
+                break
+            skel = geodesic_skeleton(image, labels, p, g=gran, device=device, plot=False)    # set plot=True to plot the whole pipeline
             if skel is None:
                 continue
             skel = skel.numpy()
             skeletons = skeletons + skel*p
         skeletons = np.squeeze(skeletons)
+        all_skels.append(skeletons)
         
         # Plot a sequence of frames with their skeletal features
         if plot_sequence or save_sequence:        
             skeletons = np.pad(skeletons, ((0,1),(0,1)))
 
             skeletons = skeletons.astype(int)
-            frame_files = natsort.natsorted(os.listdir(photo_dir))
+            frame_files = natsort.natsorted([f for f in os.listdir(photo_dir) if f[-3:]=='png'])
             photo = skimage.io.imread(os.path.join(photo_dir, frame_files[frame]))
-            photo = transform.resize(photo, skeletons.shape)
             photo_folds = photo.copy()
-            photo_folds[seg==1,0] = 0   # mark fold segmentations in green
+            photo_folds = transform.resize(photo_folds, _seg.shape)
+            photo_folds[_seg>0.3,0] = 0   # mark fold segmentations in green
+            # photo_folds = transform.resize(photo_folds, skeletons.shape)
             viridis = mpl.colormaps['viridis']
             colors = np.array([viridis(n/np.max(skel_numbers)) for n in skel_numbers])[:,:3]
+            photo = transform.resize(photo, skeletons.shape)
             photo[skeletons>0,:] = colors[skeletons[skeletons>0]-1]
             
             skel_inds = np.where(skeletons>0)
@@ -324,6 +353,8 @@ if __name__=='__main__':
                     os.makedirs(f"figures/{name}")
                 fig.savefig(f"figures/{name}/{frame}.jpeg")
                 plt.close(fig)
-                
+    if 'save_to_file' in cfg and cfg['save_to_file']:
+        np.save(f"figures/{name}/skeletons.npy", np.array(all_skels))
+        # np.save(f"figures/{name}/depths.npy")
     if plot_sequence:
         plt.show()

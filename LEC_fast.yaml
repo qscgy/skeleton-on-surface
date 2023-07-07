@@ -1,0 +1,15 @@
+name: LEC_fast
+base_dir: /bigpen/simulator_data
+depth_dir: /bigpen/simulator_data/LEC_fast
+photo_dir: /bigpen/simulator_data/LEC_fast
+plot_sequence: False
+save_sequence: True
+save_to_file: True
+scale_factor: 2
+granularity: 12
+disparity: False
+depth_fmt: exr
+device: "cuda:0"
+frames:
+  start: 28
+  stop: 50
