@@ -247,6 +247,7 @@ if __name__=='__main__':
         frames = np.arange(cfg['frames']['start'], cfg['frames']['stop'])
     else:
         frames = cfg['frames']
+    gran = cfg['granularity']
     
     # Find paths and file names
     seg_path = os.path.join(base_dir, name, "results-mine/preds.npy")
@@ -278,7 +279,7 @@ if __name__=='__main__':
         
         skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination arry for skeletons
         for p in skel_numbers:     # process each fold in skel_numbers
-            skel = geodesic_skeleton(image, p, g=12, device=device, plot=False)    # set plot=True to plot the whole pipeline
+            skel = geodesic_skeleton(image, p, g=gran, device=device, plot=False)    # set plot=True to plot the whole pipeline
             if skel is None:
                 continue
             skel = skel.numpy()
@@ -297,8 +298,10 @@ if __name__=='__main__':
             photo_folds[seg==1,0] = 0   # mark fold segmentations in green
             viridis = mpl.colormaps['viridis']
             colors = np.array([viridis(n/np.max(skel_numbers)) for n in skel_numbers])[:,:3]
-            # print(colors)
             photo[skeletons>0,:] = colors[skeletons[skeletons>0]-1]
+            
+            skel_inds = np.where(skeletons>0)
+            skel_points = np.vstack(skel_inds)
             
             if plot_sequence:
                 plt.subplot(2,len(frames),i+1)
