@@ -8,7 +8,7 @@ import numpy as np
 import scipy.ndimage as sn
 import os
 import skimage
-from skimage import filters, transform, morphology, segmentation
+from skimage import filters, transform, morphology
 import cv2
 import torch
 import time
@@ -37,13 +37,15 @@ def boundary_loop(im):
             The pixel indices of the longest cycle in the boundary, in order. Orientation
             (cw or ccw) is not yet defined.
     """
+    # skimage.io.imsave("loop.png", im)
     adj, nodes = skimage.graph.pixel_graph(im, mask=im, connectivity=2)
-    graph = nx.from_numpy_array(adj).to_directed()
-    cycles = nx.simple_cycles(graph)
+    graph = nx.from_numpy_array(adj)
+    cycles = nx.cycle_basis(graph)
     by_len = sorted(list(cycles), key=lambda c: len(c))
     node_inds = np.vstack(np.unravel_index(nodes, im.shape)).T
-
-    if len(node_inds>1):
+    if len(by_len)==0:
+        return None
+    elif len(node_inds>1):
         path = node_inds[by_len[-1]]
         return path
     else:
@@ -109,6 +111,9 @@ def gaussian_curvature(image):
     gaussian_k = (hxx * hyy - hxy**2)/((1 + hx**2 + hy**2)**2)
     return gaussian_k
 
+def erode_padded(I):
+    return morphology.binary_erosion(np.pad(I, ((1,1),(1,1))))[1:-1,1:-1] ^ I
+
 def geodesic_skeleton(image, labels, p, g=15, device='cpu', plot=False):
     """Compute the geodesic skeleton.
 
@@ -127,7 +132,7 @@ def geodesic_skeleton(image, labels, p, g=15, device='cpu', plot=False):
     if np.count_nonzero(I)<3:
         return None
     
-    cc = morphology.binary_erosion(np.pad(I, ((1,1),(1,1))))[1:-1,1:-1] ^ I
+    cc = erode_padded(I)
 
     image_pt = torch.from_numpy(image).unsqueeze_(0).unsqueeze_(0)
     image_pt = image_pt.to(device)
@@ -281,13 +286,13 @@ if __name__=='__main__':
     all_skels = []
 
     # Process each frame
+    print(frames)
     for i, frame in enumerate(frames):
         # Load frame depth and segmentation maps
         depth_path = os.path.join(depth_dir, depth_paths[frame])
         _seg = np.load(seg_path)[frame]
         
         # Preprocess segmentation and resize both
-        
         if disparity:
             image = 1/np.load(depth_path)
         elif depth_fmt=='exr':
@@ -295,16 +300,16 @@ if __name__=='__main__':
         else:
             image = np.load(depth_path)
         seg = transform.resize(_seg, (_seg.shape[-2]//s, _seg.shape[-1]//s))
-        seg = filters.gaussian(seg, 3)      # apply Gaussian blur
+        seg = filters.gaussian(seg, 2)      # apply Gaussian blur
         seg = seg>0.3
+        # seg = morphology.binary_erosion(np.pad(seg, ((1,1),(1,1))))[1:-1,1:-1]
         seg = seg.astype(np.uint8)
         image = transform.resize(image, seg.shape)
-        nlabel, labels, stats, centroids = cv2.connectedComponentsWithStats(seg)
-        
-        skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination arry for skeletons
+        nlabel, labels = cv2.connectedComponents(seg)
+        skel_numbers = np.arange(1, nlabel+1)
+            
+        skeletons = np.zeros((seg.shape[0]-1, seg.shape[1]-1))  # destination array for skeletons
         for p in skel_numbers:     # process each fold in skel_numbers
-            if p>nlabel:
-                break
             skel = geodesic_skeleton(image, labels, p, g=gran, device=device, plot=False)    # set plot=True to plot the whole pipeline
             if skel is None:
                 continue
