@@ -300,7 +300,7 @@ if __name__=='__main__':
         else:
             image = np.load(depth_path)
         seg = transform.resize(_seg, (_seg.shape[-2]//s, _seg.shape[-1]//s))
-        seg = filters.gaussian(seg, 2)      # apply Gaussian blur
+        seg = filters.gaussian(seg, 3)      # apply Gaussian blur
         seg = seg>0.3
         # seg = morphology.binary_erosion(np.pad(seg, ((1,1),(1,1))))[1:-1,1:-1]
         seg = seg.astype(np.uint8)
@@ -359,7 +359,7 @@ if __name__=='__main__':
                 fig.savefig(f"figures/{name}/{frame}.jpeg")
                 plt.close(fig)
     if 'save_to_file' in cfg and cfg['save_to_file']:
-        np.save(f"figures/{name}/skeletons.npy", np.array(all_skels))
+        np.save(f"figures/{name}/skeletons_{s}.npy", np.array(all_skels))
         # np.save(f"figures/{name}/depths.npy")
     if plot_sequence:
         plt.show()

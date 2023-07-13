@@ -1,0 +1,15 @@
+name: CJM
+base_dir: /bigpen/simulator_data
+depth_dir: /bigpen/simulator_data/CJM
+photo_dir: /bigpen/simulator_data/CJM
+plot_sequence: False
+save_sequence: True
+save_to_file: True
+scale_factor: 3
+granularity: 12
+disparity: False
+depth_fmt: exr
+device: "cuda:0"
+frames:
+  start: 0
+  stop: 50

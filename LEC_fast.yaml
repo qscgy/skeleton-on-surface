@@ -5,11 +5,11 @@ photo_dir: /bigpen/simulator_data/LEC_fast
 plot_sequence: False
 save_sequence: True
 save_to_file: True
-scale_factor: 1.5
+scale_factor: 3
 granularity: 12
 disparity: False
 depth_fmt: exr
 device: "cuda:0"
 frames:
   start: 0
-  stop: 50
+  stop: 200

@@ -10,5 +10,5 @@ def read_exr(fpath):
     return im
 
 if __name__=='__main__':
-    plt.imshow(read_exr("/bigpen/simulator_data/LEC_fast/LEC_depth00136.exr"))
+    plt.imshow(read_exr("/bigpen/simulator_data/CJM/CJM_pos01599.exr"))
     plt.show()
